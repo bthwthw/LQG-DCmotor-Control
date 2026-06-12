@@ -4,6 +4,7 @@ import serial
 import serial.tools.list_ports
 import threading
 import time
+import math
 from collections import deque
 
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
@@ -14,18 +15,19 @@ class LQGMotorGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("USB CDC LQG DC Motor Controller")
-        self.root.geometry("1180x780")
-        self.root.minsize(1080, 700)
+        self.root.geometry("1180x650")
+        self.root.minsize(1080, 600)
 
         self.ser = None
         self.connected = False
         self.reader_thread = None
         self.port_map = {}
 
-        self.max_points = 150
-        self.time_data = deque(maxlen=self.max_points)
-        self.sp_data = deque(maxlen=self.max_points)
-        self.rpm_data = deque(maxlen=self.max_points)
+        # Không giới hạn 150 điểm nữa để đồ thị không bị trôi.
+        # Trục thời gian sẽ luôn bắt đầu từ 0 giây sau khi Connect.
+        self.time_data = deque()
+        self.sp_data = deque()
+        self.rpm_data = deque()
 
         self.current_rpm = 0
         self.current_pwm = 0
@@ -148,67 +150,6 @@ class LQGMotorGUI:
 
         ttk.Separator(right).pack(fill=tk.X, padx=10, pady=4)
 
-        # ================= LQG TUNING =================
-        tk.Label(right, text="LQG ONLINE TUNING", font=("Arial", 12, "bold")).pack(pady=(2, 3))
-
-        self.kx_var = tk.DoubleVar(value=4.5)
-        self.ki_var = tk.DoubleVar(value=0.8)
-        self.l_var = tk.DoubleVar(value=0.30)
-        self.kr_var = tk.DoubleVar(value=1.00)
-        self.alpha_var = tk.DoubleVar(value=0.10)
-        self.rpm_ramp_var = tk.DoubleVar(value=3.0)
-        self.pwm_ramp_var = tk.DoubleVar(value=12.0)
-        self.pwm_min_var = tk.DoubleVar(value=80.0)
-        self.max_step_var = tk.DoubleVar(value=12.0)
-
-        self.create_tuning_row(right, "Kx", self.kx_var, 0.0, 20.0, 0.1)
-        self.create_tuning_row(right, "Ki", self.ki_var, 0.0, 5.0, 0.05)
-        self.create_tuning_row(right, "L", self.l_var, 0.0, 1.0, 0.01)
-        self.create_tuning_row(right, "Kr", self.kr_var, 0.0, 2.0, 0.05)
-        self.create_tuning_row(right, "Alpha", self.alpha_var, 0.01, 1.0, 0.01)
-        self.create_tuning_row(right, "RPM Ramp", self.rpm_ramp_var, 0.5, 20.0, 0.5)
-        self.create_tuning_row(right, "PWM Ramp", self.pwm_ramp_var, 1.0, 50.0, 1.0)
-        self.create_tuning_row(right, "PWM Min", self.pwm_min_var, 0.0, 300.0, 5.0)
-        self.create_tuning_row(right, "Max Step", self.max_step_var, 1.0, 50.0, 1.0)
-
-        preset_frame = tk.Frame(right)
-        preset_frame.pack(fill=tk.X, padx=15, pady=3)
-
-        tk.Button(
-            preset_frame,
-            text="Smooth",
-            command=lambda: self.apply_preset(3.5, 0.4, 0.20, 0.90, 0.08, 2.0, 8.0, 80, 8.0)
-        ).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
-
-        tk.Button(
-            preset_frame,
-            text="Normal",
-            command=lambda: self.apply_preset(4.5, 0.8, 0.30, 1.00, 0.10, 3.0, 12.0, 80, 12.0)
-        ).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
-
-        tk.Button(
-            preset_frame,
-            text="Fast",
-            command=lambda: self.apply_preset(6.5, 1.3, 0.45, 1.10, 0.15, 5.0, 18.0, 90, 18.0)
-        ).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
-
-        tk.Button(
-            right,
-            text="SEND TUNE",
-            font=("Arial", 10, "bold"),
-            command=self.send_tune
-        ).pack(fill=tk.X, padx=15, pady=4)
-
-        tk.Label(
-            right,
-            text="Rung nhiều: giảm Ki, L, Max Step. Lên chậm: tăng Kr hoặc Ki. Motor ì: tăng PWM Min.",
-            font=("Arial", 8),
-            wraplength=350,
-            justify="left"
-        ).pack(anchor="w", padx=15, pady=(0, 4))
-
-        ttk.Separator(right).pack(fill=tk.X, padx=10, pady=4)
-
         # ================= MONITOR =================
         self.lbl_rpm = tk.Label(right, text="RPM : 0", font=("Arial", 12))
         self.lbl_rpm.pack(anchor="w", padx=15, pady=1)
@@ -234,6 +175,10 @@ class LQGMotorGUI:
         self.ax.set_ylabel("RPM")
         self.ax.grid(True)
 
+        # Giữ gốc đồ thị cố định tại 0, không để Matplotlib tự đẩy trục.
+        self.ax.set_xlim(0, 10)
+        self.ax.set_ylim(0, 300)
+
         self.line_sp, = self.ax.plot([], [], "--", label="RPM Setpoint (LQG only)")
         self.line_rpm, = self.ax.plot([], [], label="Actual RPM")
         self.ax.legend()
@@ -243,61 +188,6 @@ class LQGMotorGUI:
 
         self.refresh_ports()
         self.update_mode_ui()
-
-    # ==========================================================
-    # TUNING UI
-    # ==========================================================
-    def create_tuning_row(self, parent, name, var, min_val, max_val, resolution):
-        frame = tk.Frame(parent)
-        frame.pack(fill=tk.X, padx=15, pady=1)
-
-        tk.Label(frame, text=f"{name}:", width=8, font=("Arial", 9)).pack(side=tk.LEFT)
-
-        scale = tk.Scale(
-            frame,
-            from_=min_val,
-            to=max_val,
-            resolution=resolution,
-            orient=tk.HORIZONTAL,
-            variable=var,
-            showvalue=False,
-            length=190
-        )
-        scale.pack(side=tk.LEFT, fill=tk.X, expand=True)
-
-        entry = tk.Entry(frame, width=7)
-        entry.pack(side=tk.LEFT, padx=(5, 0))
-
-        def update_entry(*args):
-            entry.delete(0, tk.END)
-            entry.insert(0, f"{var.get():.3g}")
-
-        def update_scale(event=None):
-            try:
-                value = float(entry.get())
-                if value < min_val:
-                    value = min_val
-                if value > max_val:
-                    value = max_val
-                var.set(value)
-            except:
-                update_entry()
-
-        var.trace_add("write", update_entry)
-        entry.bind("<Return>", update_scale)
-        entry.bind("<FocusOut>", update_scale)
-        update_entry()
-
-    def apply_preset(self, kx, ki, l, kr, alpha, rpm_ramp, pwm_ramp, pwm_min, max_step):
-        self.kx_var.set(kx)
-        self.ki_var.set(ki)
-        self.l_var.set(l)
-        self.kr_var.set(kr)
-        self.alpha_var.set(alpha)
-        self.rpm_ramp_var.set(rpm_ramp)
-        self.pwm_ramp_var.set(pwm_ramp)
-        self.pwm_min_var.set(pwm_min)
-        self.max_step_var.set(max_step)
 
     # ==========================================================
     # UI MODE
@@ -466,40 +356,6 @@ class LQGMotorGUI:
         except Exception as e:
             messagebox.showerror("Send Error", str(e))
 
-    def send_tune(self):
-        if not self.connected or not self.ser or not self.ser.is_open:
-            messagebox.showwarning("Warning", "USB CDC is not connected.")
-            return
-
-        try:
-            kx = self.kx_var.get()
-            ki = self.ki_var.get()
-            l = self.l_var.get()
-            kr = self.kr_var.get()
-            alpha = self.alpha_var.get()
-            rpm_ramp = self.rpm_ramp_var.get()
-            pwm_ramp = self.pwm_ramp_var.get()
-            pwm_min = int(self.pwm_min_var.get())
-            max_step = self.max_step_var.get()
-
-            cmd = (
-                f"TUNE,{kx},{ki},{l},{kr},{alpha},"
-                f"{rpm_ramp},{pwm_ramp},{pwm_min},{max_step}\r\n"
-            )
-
-            self.ser.write(cmd.encode("ascii"))
-
-            messagebox.showinfo(
-                "Tuning",
-                "Sent tuning:\n"
-                f"Kx={kx:.3g}, Ki={ki:.3g}, L={l:.3g}, Kr={kr:.3g}\n"
-                f"Alpha={alpha:.3g}, RPM Ramp={rpm_ramp:.3g}, PWM Ramp={pwm_ramp:.3g}\n"
-                f"PWM Min={pwm_min}, Max Step={max_step:.3g}"
-            )
-
-        except Exception as e:
-            messagebox.showerror("Tune Error", str(e))
-
     # ==========================================================
     # RECEIVE
     # ==========================================================
@@ -573,11 +429,29 @@ class LQGMotorGUI:
             self.lbl_dir.config(text="Direction : Stop")
 
         if len(self.time_data) > 1:
-            self.line_sp.set_data(list(self.time_data), list(self.sp_data))
-            self.line_rpm.set_data(list(self.time_data), list(self.rpm_data))
+            x = list(self.time_data)
+            sp = list(self.sp_data)
+            rpm = list(self.rpm_data)
 
-            self.ax.relim()
-            self.ax.autoscale_view()
+            self.line_sp.set_data(x, sp)
+            self.line_rpm.set_data(x, rpm)
+
+            # Trục X luôn bắt đầu từ 0. Khi thời gian tăng, đồ thị chỉ mở rộng sang phải,
+            # không bị trôi sang trái như khi dùng autoscale_view().
+            x_max = max(10.0, x[-1])
+            self.ax.set_xlim(0, x_max)
+
+            # Trục Y luôn bắt đầu từ 0. Tự nâng giới hạn trên nếu RPM vượt quá 300.
+            valid_y = []
+            for value in sp + rpm:
+                if isinstance(value, (int, float)) and not math.isnan(value):
+                    valid_y.append(value)
+
+            y_max = 300.0
+            if valid_y:
+                y_max = max(300.0, max(valid_y) * 1.2)
+
+            self.ax.set_ylim(0, y_max)
             self.canvas.draw_idle()
 
         self.root.after(100, self.update_plot)
