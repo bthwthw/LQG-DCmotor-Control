@@ -18,8 +18,12 @@ disp('Ma tran C sau khi doi lai:'); disp(C);
 sys_ss_c = ss(A, B, C, D);
 
 T = readtable('thong_so2.csv');
-data_pwm_500 = T.Raw_RPM(T.PWM_Output == 500);
-vk = var(data_pwm_500);
+
+data_pwm_500_full = T.Raw_RPM(T.PWM_Output == 500);
+% figure;
+% plot(data_pwm_500_full); 
+data_tinh = data_pwm_500_full(590:end); 
+vk = var(data_tinh);
 
 %% roi rac hoa 
 Ts = 0.01;
