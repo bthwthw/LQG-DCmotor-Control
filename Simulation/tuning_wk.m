@@ -42,7 +42,7 @@ for i = 1:length(TR_list)
     plot(1:N, Z, 'Color', [0.7 0.7 0.7], 'LineWidth', 1.5, 'DisplayName', 'Raw RPM');
     hold on; grid on;
     plot(1:N, X_hat_all(i, :), colors{i}, 'LineWidth', 2, ...
-        'DisplayName', ['Kalman (TR = ', num2str(TR_list(i)), ')']);
+        'DisplayName', ['Kalman PWM (TR = ', num2str(TR_list(i)), ')']);
     ylabel('Vận tốc (RPM)');
     legend('Location', 'best');
 end
