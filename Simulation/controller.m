@@ -47,5 +47,9 @@ wk = 0.2 * vk;
 G = 1;
 L_d = dlqe(Ad, G, Cd, wk, vk);
 
+%% precompensation 
+N = 1 / (Cd * inv(1 - (Ad - Bd * K_d)) * Bd);
+
 disp('Do loi LQR: '); disp(K_d);
 disp('Do loi kalman: '); disp(L_d);
+disp('Do loi tien bu: '); disp(N);
